@@ -41,9 +41,7 @@ const (
 	XGPushDeviceType_Android = 2
 )
 
-var (
-	Environment = XGPushEnviroment_Develop
-)
+var ()
 
 type XGPushMsg struct {
 	Method string
@@ -61,6 +59,7 @@ type XGPushParameters struct {
 	Param_connections int
 	Param_queue_size  int
 	Param_timeout     time.Duration
+	Param_environment string
 }
 
 type XGPush struct {
@@ -161,7 +160,7 @@ func (xgpush *XGPush) PushToSingleAccount(device_type int, account, message, mes
 	params["message_type"] = message_type
 	params["message"] = message
 	if device_type == XGPushDeviceType_IOS {
-		params["environment"] = Environment
+		params["environment"] = xgpush.Param_environment
 	}
 	xgpush.PushMessage(&XGPushMsg{
 		Method: XGPUSH_PUSH_SINGLE_ACCOUNT_METHOD,
@@ -183,7 +182,7 @@ func (xgpush *XGPush) PushToSingleDevice(device_type int, device_token, message,
 	params["message_type"] = message_type
 	params["message"] = message
 	if device_type == XGPushDeviceType_IOS {
-		params["environment"] = Environment
+		params["environment"] = xgpush.Param_environment
 	}
 	xgpush.PushMessage(&XGPushMsg{
 		Method: XGPUSH_PUSH_SINGLE_DEVICE_METHOD,
@@ -210,7 +209,7 @@ func (xgpush *XGPush) PushToAccountList(device_type int, account_list []string,
 	params["message_type"] = message_type
 	params["message"] = message
 	if device_type == XGPushDeviceType_IOS {
-		params["environment"] = Environment
+		params["environment"] = xgpush.Param_environment
 	}
 	xgpush.PushMessage(&XGPushMsg{
 		Method: XGPUSH_PUSH_ACCOUNT_LIST_METHOD,
@@ -233,7 +232,7 @@ func (xgpush *XGPush) PushToAllDevice(device_type int, message, message_type str
 	params["message_type"] = message_type
 	params["message"] = message
 	if device_type == XGPushDeviceType_IOS {
-		params["environment"] = Environment
+		params["environment"] = xgpush.Param_environment
 	}
 	xgpush.PushMessage(&XGPushMsg{
 		Method: XGPUSH_PUSH_ALL_DEVICE_METHOD,
@@ -255,7 +254,7 @@ func (xgpush *XGPush) PushToAllDeviceWithLoop(device_type int, message, message_
 	params["loop_times"] = fmt.Sprintf("%d", loop_times)
 	params["loop_interval"] = fmt.Sprintf("%d", loop_interval)
 	if device_type == XGPushDeviceType_IOS {
-		params["environment"] = Environment
+		params["environment"] = xgpush.Param_environment
 	}
 	xgpush.PushMessage(&XGPushMsg{
 		Method: XGPUSH_PUSH_ALL_DEVICE_METHOD,

@@ -38,6 +38,7 @@ func TestXGPush(t *testing.T) {
 		Param_connections: 5,
 		Param_queue_size:  10000,
 		Param_timeout:     time.Second,
+		Param_environment: XGPushEnviroment_Develop,
 	}
 	xgpush := NewXGPush(&parameters)
 	//xgpush.PushNotificationToSingleIOSAccount("test1", `{"aps":{"alert":"to single ios account"}}`)
