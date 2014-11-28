@@ -41,11 +41,16 @@ const (
 	XGPushDeviceType_Android = 2
 )
 
-var ()
+var (
+	ErrUnknownDeviceType      = errors.New("Unknown device type")
+	ErrUnsupportedResultType  = errors.New("Unsupported result type")
+	ErrNoSuitableDataInResult = errors.New("No suitable data in result")
+)
 
 type XGPushMsg struct {
-	Method string
-	Params map[string]string
+	Method     string
+	Params     map[string]string
+	DeviceType int
 }
 
 type XGPushConn struct {
@@ -54,12 +59,14 @@ type XGPushConn struct {
 }
 
 type XGPushParameters struct {
-	Param_access_id   string
-	Param_secret_key  string
-	Param_connections int
-	Param_queue_size  int
-	Param_timeout     time.Duration
-	Param_environment string
+	Param_ios_access_id      string
+	Param_android_access_id  string
+	Param_ios_secret_key     string
+	Param_android_secret_key string
+	Param_connections        int
+	Param_queue_size         int
+	Param_timeout            time.Duration
+	Param_environment        string
 }
 
 type XGPush struct {
@@ -70,7 +77,7 @@ type XGPush struct {
 
 // ========================================
 // Protocol
-type PushResponse struct {
+type XGPushResponse struct {
 	RetCode int         `json:"ret_code"`
 	ErrMsg  string      `json:"err_msg"`
 	Result  interface{} `json:"result"`
@@ -107,11 +114,23 @@ func NewXGPush(parameters *XGPushParameters) (xgpush *XGPush) {
 // F）将E形成字符串计算MD5值，形成一个32位的十六进制（字母小写）字符串，即为本次请求sign（签名）的值；
 // Sign=MD5($http_method$url$k1=$v1$k2=$v2$secret_key); 该签名值基本可以保证请求是合法者发送且参数没有被修改，但无法保证不被偷窥。
 // 例如： POST请求到接口http://openapi.xg.qq.com/v2/push/single_device，有四个参数，access_id=123，timestamp=1386691200，Param1=Value1，Param2=Value2，secret_key为abcde。则上述E步骤拼接出的字符串为POSTopenapi.xg.qq.com/v2/push/single_deviceParam1=Value1Param2=Value2access_id=123timestamp=1386691200abcde，注意字典序中大写在前。计算出该字符串的MD5为ccafecaef6be07493cfe75ebc43b7d53，以此作为sign参数的值
-func (xgpush *XGPush) sign(method string, params map[string]string) (buf *bytes.Buffer) {
-	params["access_id"] = xgpush.Param_access_id
+func (xgpush *XGPush) sign(method string, device_type int, params map[string]string) (err error) {
+	var secret_key string
+	switch device_type {
+	case XGPushDeviceType_IOS:
+		params["environment"] = xgpush.Param_environment
+		params["access_id"] = xgpush.Param_ios_access_id
+		secret_key = xgpush.Param_ios_secret_key
+	case XGPushDeviceType_Android:
+		params["access_id"] = xgpush.Param_android_access_id
+		secret_key = xgpush.Param_android_secret_key
+	default:
+		return ErrUnknownDeviceType
+	}
 	if _, found := params["timestamp"]; !found {
 		params["timestamp"] = strconv.FormatInt(time.Now().Unix(), 10)
 	}
+
 	//params["valid_time"] = XGPUSH_VALID_TIME
 	h := md5.New()
 	io.WriteString(h, XGPUSH_METHOD)
@@ -125,13 +144,15 @@ func (xgpush *XGPush) sign(method string, params map[string]string) (buf *bytes.
 	for _, kv := range kvs {
 		io.WriteString(h, kv)
 	}
-	io.WriteString(h, xgpush.Param_secret_key)
+	io.WriteString(h, secret_key)
 	params["sign"] = fmt.Sprintf("%x", h.Sum(nil))
 	return
 }
 
 func (xgpush *XGPush) Post(msg *XGPushMsg) (resp *http.Response, err error) {
-	xgpush.sign(msg.Method, msg.Params)
+	if err = xgpush.sign(msg.Method, msg.DeviceType, msg.Params); err != nil {
+		return
+	}
 	buf := new(bytes.Buffer)
 	first := true
 	for key, value := range msg.Params {
@@ -159,12 +180,10 @@ func (xgpush *XGPush) PushToSingleAccount(device_type int, account, message, mes
 	params["account"] = account
 	params["message_type"] = message_type
 	params["message"] = message
-	if device_type == XGPushDeviceType_IOS {
-		params["environment"] = xgpush.Param_environment
-	}
 	xgpush.PushMessage(&XGPushMsg{
-		Method: XGPUSH_PUSH_SINGLE_ACCOUNT_METHOD,
-		Params: params,
+		Method:     XGPUSH_PUSH_SINGLE_ACCOUNT_METHOD,
+		Params:     params,
+		DeviceType: device_type,
 	})
 }
 func (xgpush *XGPush) PushNotificationToSingleAccount(device_type int, account, message string) {
@@ -172,6 +191,9 @@ func (xgpush *XGPush) PushNotificationToSingleAccount(device_type int, account, 
 }
 func (xgpush *XGPush) PushNotificationToSingleIOSAccount(account, message string) {
 	xgpush.PushToSingleAccount(XGPushDeviceType_IOS, account, message, XGPushMessageType_Notification)
+}
+func (xgpush *XGPush) PushNotificationToSingleAndroidAccount(account, message string) {
+	xgpush.PushToSingleAccount(XGPushDeviceType_Android, account, message, XGPushMessageType_Notification)
 }
 
 // --------------------------------------------
@@ -181,12 +203,10 @@ func (xgpush *XGPush) PushToSingleDevice(device_type int, device_token, message,
 	params["device_token"] = device_token
 	params["message_type"] = message_type
 	params["message"] = message
-	if device_type == XGPushDeviceType_IOS {
-		params["environment"] = xgpush.Param_environment
-	}
 	xgpush.PushMessage(&XGPushMsg{
-		Method: XGPUSH_PUSH_SINGLE_DEVICE_METHOD,
-		Params: params,
+		Method:     XGPUSH_PUSH_SINGLE_DEVICE_METHOD,
+		Params:     params,
+		DeviceType: device_type,
 	})
 }
 func (xgpush *XGPush) PushNotificationToSingleDevice(device_type int, device_token, message string) {
@@ -194,6 +214,9 @@ func (xgpush *XGPush) PushNotificationToSingleDevice(device_type int, device_tok
 }
 func (xgpush *XGPush) PushNotificationToSingleIOSDevice(device_token, message string) {
 	xgpush.PushToSingleDevice(XGPushDeviceType_IOS, device_token, message, XGPushMessageType_Notification)
+}
+func (xgpush *XGPush) PushNotificationToSingleAndroidDevice(device_token, message string) {
+	xgpush.PushToSingleDevice(XGPushDeviceType_Android, device_token, message, XGPushMessageType_Notification)
 }
 
 // --------------------------------------------
@@ -208,12 +231,10 @@ func (xgpush *XGPush) PushToAccountList(device_type int, account_list []string,
 	params["account_list"] = string(jsondata)
 	params["message_type"] = message_type
 	params["message"] = message
-	if device_type == XGPushDeviceType_IOS {
-		params["environment"] = xgpush.Param_environment
-	}
 	xgpush.PushMessage(&XGPushMsg{
-		Method: XGPUSH_PUSH_ACCOUNT_LIST_METHOD,
-		Params: params,
+		Method:     XGPUSH_PUSH_ACCOUNT_LIST_METHOD,
+		Params:     params,
+		DeviceType: device_type,
 	})
 	return nil
 }
@@ -224,6 +245,9 @@ func (xgpush *XGPush) PushNotificationToAccountList(device_type int, account_lis
 func (xgpush *XGPush) PushNotificationToIOSAccountList(account_list []string, message string) error {
 	return xgpush.PushToAccountList(XGPushDeviceType_IOS, account_list, message, XGPushMessageType_Notification)
 }
+func (xgpush *XGPush) PushNotificationToAndroidAccountList(account_list []string, message string) error {
+	return xgpush.PushToAccountList(XGPushDeviceType_Android, account_list, message, XGPushMessageType_Notification)
+}
 
 // --------------------------------------------
 // push/all_device
@@ -231,12 +255,10 @@ func (xgpush *XGPush) PushToAllDevice(device_type int, message, message_type str
 	params := make(map[string]string)
 	params["message_type"] = message_type
 	params["message"] = message
-	if device_type == XGPushDeviceType_IOS {
-		params["environment"] = xgpush.Param_environment
-	}
 	xgpush.PushMessage(&XGPushMsg{
-		Method: XGPUSH_PUSH_ALL_DEVICE_METHOD,
-		Params: params,
+		Method:     XGPUSH_PUSH_ALL_DEVICE_METHOD,
+		Params:     params,
+		DeviceType: device_type,
 	})
 }
 func (xgpush *XGPush) PushNotificationToAllDevice(device_type int, message string) {
@@ -244,6 +266,9 @@ func (xgpush *XGPush) PushNotificationToAllDevice(device_type int, message strin
 }
 func (xgpush *XGPush) PushNotificationToAllIOSDevice(message string) {
 	xgpush.PushNotificationToAllDevice(XGPushDeviceType_IOS, message)
+}
+func (xgpush *XGPush) PushNotificationToAllAndroidDevice(message string) {
+	xgpush.PushNotificationToAllDevice(XGPushDeviceType_Android, message)
 }
 
 func (xgpush *XGPush) PushToAllDeviceWithLoop(device_type int, message, message_type string,
@@ -253,12 +278,10 @@ func (xgpush *XGPush) PushToAllDeviceWithLoop(device_type int, message, message_
 	params["message"] = message
 	params["loop_times"] = fmt.Sprintf("%d", loop_times)
 	params["loop_interval"] = fmt.Sprintf("%d", loop_interval)
-	if device_type == XGPushDeviceType_IOS {
-		params["environment"] = xgpush.Param_environment
-	}
 	xgpush.PushMessage(&XGPushMsg{
-		Method: XGPUSH_PUSH_ALL_DEVICE_METHOD,
-		Params: params,
+		Method:     XGPUSH_PUSH_ALL_DEVICE_METHOD,
+		Params:     params,
+		DeviceType: device_type,
 	})
 }
 func (xgpush *XGPush) PushNotificationToAllDeviceWithLoop(device_type int, message string,
@@ -269,30 +292,83 @@ func (xgpush *XGPush) PushNotificationToAllIOSDeviceWithLoop(message string,
 	loop_times, loop_interval uint) {
 	xgpush.PushNotificationToAllDeviceWithLoop(XGPushDeviceType_IOS, message, loop_times, loop_interval)
 }
+func (xgpush *XGPush) PushNotificationToAllAndroidDeviceWithLoop(message string,
+	loop_times, loop_interval uint) {
+	xgpush.PushNotificationToAllDeviceWithLoop(XGPushDeviceType_IOS, message, loop_times, loop_interval)
+}
 
 // --------------------------------------------
 // application/get_app_device_num
-func (xgpush *XGPush) GetAppDeviceNum() (num int, err error) {
+func (xgpush *XGPush) GetAppIOSDeviceNum() (num int, err error) {
 	httpresp, err := xgpush.Post(&XGPushMsg{
-		Method: XGPUSH_GET_APP_DEVICE_NUM_METHOD,
-		Params: make(map[string]string),
+		Method:     XGPUSH_GET_APP_DEVICE_NUM_METHOD,
+		Params:     make(map[string]string),
+		DeviceType: XGPushDeviceType_IOS,
 	})
 	if err != nil {
-		log.Println("GetAppDeviceNum err", err.Error())
+		log.Println("GetAppIOSDeviceNum err", err.Error())
 		return
 	}
 	defer httpresp.Body.Close()
-	var resp GetAppDeviceNumResponse
+	var resp XGPushResponse
 	jsondec := json.NewDecoder(httpresp.Body)
 	err = jsondec.Decode(&resp)
 	if err != nil {
 		return
 	}
-	fmt.Printf("GetAppDeviceNum resp: %+v\n", resp)
+	num, err = parseGetAppDeviceNumResponse(&resp)
+
+	return
+}
+func (xgpush *XGPush) GetAppAndroidDeviceNum() (num int, err error) {
+	httpresp, err := xgpush.Post(&XGPushMsg{
+		Method:     XGPUSH_GET_APP_DEVICE_NUM_METHOD,
+		Params:     make(map[string]string),
+		DeviceType: XGPushDeviceType_Android,
+	})
+	if err != nil {
+		log.Println("GetAppAndroidDeviceNum err", err.Error())
+		return
+	}
+	defer httpresp.Body.Close()
+	var resp XGPushResponse
+	jsondec := json.NewDecoder(httpresp.Body)
+	err = jsondec.Decode(&resp)
+	if err != nil {
+		return
+	}
+	num, err = parseGetAppDeviceNumResponse(&resp)
+	return
+}
+func parseGetAppDeviceNumResponse(resp *XGPushResponse) (num int, err error) {
 	if resp.RetCode != 0 {
 		return 0, errors.New(fmt.Sprintf("response %d - %s", resp.RetCode, resp.ErrMsg))
 	}
-	num = resp.Result.DeviceNum
+	if result, ok := resp.Result.(map[string]interface{}); !ok {
+		return 0, ErrUnsupportedResultType
+	} else {
+		if v, ok := result["device_num"]; !ok {
+			return 0, ErrNoSuitableDataInResult
+		} else {
+			if f, ok := v.(float64); !ok {
+				return 0, ErrNoSuitableDataInResult
+			} else {
+				num = int(f)
+			}
+		}
+	}
+	return
+}
+func (xgpush *XGPush) GetAppDeviceNum() (num int, err error) {
+	var t int
+	if t, err = xgpush.GetAppIOSDeviceNum(); err != nil {
+		return
+	}
+	num = t
+	if t, err = xgpush.GetAppAndroidDeviceNum(); err != nil {
+		return
+	}
+	num += t
 	return
 }
 
@@ -325,7 +401,7 @@ func (conn *XGPushConn) run() {
 		}
 		log.Printf("Response: %s\n", string(buf.Bytes()))
 		jsondec := json.NewDecoder(buf)
-		var pushResp PushResponse
+		var pushResp XGPushResponse
 		err = jsondec.Decode(&pushResp)
 		if err != nil {
 			log.Printf("Decode push response err: %s\n", err.Error())
